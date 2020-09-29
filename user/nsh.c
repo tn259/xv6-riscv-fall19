@@ -11,7 +11,7 @@
 
 struct execcmd {
   int argc;
-  char argv[MAXARGS][MAXTOKENLEN];
+  char *argv[MAXARGS];
   char *endargv[MAXARGS];
   char infile[MAXTOKENLEN]; // NULL if n/a
   char *endinfile;
@@ -74,7 +74,8 @@ runcmd(struct execcmd *cmd, int pipeidx, int numpipes)
       close(p[1]);
       if (cmd->endargv[0] == 0)
         exit(1); // no command parsed!
-      exec(cmd->argv[0], (char**)cmd->argv); 
+      if (exec(cmd->argv[0], cmd->argv) != 0)
+	panic("piped exec");
     }
     else { // child
       close(0);
@@ -88,9 +89,7 @@ runcmd(struct execcmd *cmd, int pipeidx, int numpipes)
   else { // no pipes left
     if (cmd->endargv[0] == 0)
       exit(1); // no command parsed!
-    fprintf(2, "cmd is %s\n", cmd->argv[0]);
-    fprintf(2, "arg 1 is %s\n", ((char**)cmd->argv)[0]);
-    if (exec(cmd->argv[0], (char**)cmd->argv) != 0)
+    if (exec(cmd->argv[0], cmd->argv) != 0)
       panic("exec");
   }
 
@@ -296,6 +295,13 @@ parseredirs(char **ps, char *es, struct execcmd *cmd)
 }
 
 void
+setargv(char **argv, char **endargv, char *q, char *eq)
+{
+  *argv = q;
+  *endargv = eq;
+}
+
+void
 parseexec(char **ps, char *es, struct execcmd *cmd)
 {
   char *q, *eq;
@@ -308,7 +314,8 @@ parseexec(char **ps, char *es, struct execcmd *cmd)
       break;
     if(tok != 'a')
       panic("syntax");
-    memmove(cmd->argv[argc], q, eq-q);
+    //memmove(cmd->argv[argc], q, eq-q);
+    setargv(&cmd->argv[argc], &cmd->endargv[argc], q, eq);
     cmd->endargv[argc] = eq;
     argc++;
     if(argc >= MAXARGS)
