@@ -27,9 +27,6 @@ int parsecmd(char*, struct execcmd *cmds);
 void
 runcmd(struct execcmd *cmd, int pipeidx, int numpipes)
 {
-  if (pipeidx == numpipes)
-    exit(0);
-
   int p[2];
 
   if(cmd == 0)
