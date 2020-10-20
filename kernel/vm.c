@@ -17,6 +17,8 @@ extern char trampoline[]; // trampoline.S
 
 void print(pagetable_t);
 
+void vmprinthelper(pagetable_t pagetable, int level);
+
 /*
  * create a direct-map page table for the kernel and
  * turn on paging. called early, in supervisor mode.
@@ -449,5 +451,34 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
     return 0;
   } else {
     return -1;
+  }
+}
+
+void
+vmprint(pagetable_t pagetable)
+{
+  printf("page table %p\n", pagetable);
+  vmprinthelper(pagetable, 0);
+}
+
+void
+vmprinthelper(pagetable_t pagetable, int level)
+{
+  // there are 2^9 = 512 PTEs in a page table.
+  for(int i = 0; i < 512; i++){
+    pte_t pte = pagetable[i];
+    if((pte & PTE_V) && (pte & (PTE_R|PTE_W|PTE_X)) == 0){
+      // this PTE points to a lower-level page table.
+      uint64 child = PTE2PA(pte);
+      if (level == 1) {
+        printf(" ..");
+      }
+      printf(" ..%d: pte %p pa %p\n", i, pte, child);
+      vmprinthelper((pagetable_t)child, level+1);
+    } else if(pte & PTE_V){
+      printf(" .. ..");
+      uint64 child = PTE2PA(pte);
+      printf(" ..%d: pte %p pa %p\n", i, pte, child);
+    }
   }
 }
