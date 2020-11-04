@@ -108,15 +108,18 @@ walkaddr(pagetable_t pagetable, uint64 va)
     return 0;
 
   pte = walk(pagetable, va, 0);
+
   if(pte == 0)
     return 0;
   if((*pte & PTE_V) == 0)
     return 0;
   if((*pte & PTE_U) == 0)
     return 0;
+
   pa = PTE2PA(*pte);
   return pa;
 }
+
 
 // add a mapping to the kernel page table.
 // only used when booting.
@@ -316,13 +319,15 @@ uvmfree(pagetable_t pagetable, uint64 sz)
 // physical memory.
 // returns 0 on success, -1 on failure.
 // frees any allocated pages on failure.
+// 
+// Cow: Instead of copying pa, we map new to pa
 int
 uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 {
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
+  //char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
@@ -330,12 +335,14 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
+    // mark as non writable
+    // mark as COW
+    *pte = *pte & ~PTE_W;
+    *pte = *pte | PTE_COW;
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
+    // child and parent now both point to this pa
+    kincrementrefcount((void*)pa);
+    if(mappages(new, i, PGSIZE, pa, flags) != 0){
       goto err;
     }
   }
@@ -359,6 +366,46 @@ uvmclear(pagetable_t pagetable, uint64 va)
   *pte &= ~PTE_U;
 }
 
+uint64
+uvmcow(pagetable_t pagetable, uint64 va)
+{
+  pte_t *pte;
+
+  if(va >= MAXVA)
+    return 0;
+
+  pte = walk(pagetable, va, 0);
+
+  if(pte == 0)
+    return 0;
+  if((*pte & PTE_V) == 0)
+    return 0;
+  if((*pte & PTE_U) == 0){
+    printf("uvmcow: user flag not set in pte\n");
+    return 0;
+  }
+  if((*pte & PTE_COW) == 0)
+    return PTE2PA(*pte);
+
+  void *pa = (void *)PTE2PA(*pte);
+
+  uint flags = PTE_FLAGS(*pte); 
+  flags |= PTE_W;
+  flags &= ~PTE_COW;
+
+  void *mem = kalloc();
+  if (mem == 0)
+    return -1;
+  // copy mem
+  memmove(mem, pa, PGSIZE);
+  // map pte to new mem addr as writable and non-cow
+  *pte = PA2PTE(mem) | flags;
+  // decr pa ref or free entirely
+  kfree(pa);
+
+  return (uint64)mem;
+}
+
 // Copy from kernel to user.
 // Copy len bytes from src to virtual address dstva in a given page table.
 // Return 0 on success, -1 on error.
@@ -369,7 +416,7 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
-    pa0 = walkaddr(pagetable, va0);
+    pa0 = uvmcow(pagetable, va0);
     if(pa0 == 0)
       return -1;
     n = PGSIZE - (dstva - va0);
